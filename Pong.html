@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pong vs. Bot</title>
+    <style>
+        /* Grundlegendes Styling für das Zentrieren des Spiels */
+        body {
+            margin: 0;
+            padding: 0;
+            background-color: #1a1a1a; /* Dunkelgrauer Hintergrund */
+            color: white;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            font-family: 'Courier New', Courier, monospace;
+            overflow: hidden; /* Keine Scrollbars */
+        }
+
+        h1 {
+            margin-bottom: 10px;
+            font-size: 24px;
+            letter-spacing: 2px;
+            text-transform: uppercase;
+        }
+
+        canvas {
+            border: 4px solid #fff;
+            box-shadow: 0 0 20px rgba(0,0,0,0.5);
+            background-color: #000;
+            cursor: none; /* Mauszeiger über dem Spiel ausblenden */
+        }
+
+        .controls {
+            margin-top: 15px;
+            font-size: 14px;
+            color: #aaa;
+        }
+    </style>
+</head>
+<body>
+
+    <h1>Retro Pong</h1>
+    <canvas id="pong" width="800" height="500"></canvas>
+    
+    <div class="controls">Steuerung: Bewege die <b>MAUS</b> hoch und runter</div>
+
+    <script>
+        // Auswahl des Canvas-Elements
+        const canvas = document.getElementById("pong");
+        const ctx = canvas.getContext("2d");
+
+        // Spiel-Konstanten
+        const FPS = 60;
+        const COMPUTER_LEVEL = 0.1; // 0.1 ist normal, höher ist schwerer
+
+        // Das User-Objekt (Linker Schläger)
+        const user = {
+            x: 0, 
+            y: canvas.height/2 - 50,
+            width: 10,
+            height: 100,
+            color: "WHITE",
+            score: 0
+        };
+
+        // Das Computer-Objekt (Rechter Schläger)
+        const com = {
+            x: canvas.width - 10, 
+            y: canvas.height/2 - 50,
+            width: 10,
+            height: 100,
+            color: "WHITE",
+            score: 0
+        };
+
+        // Der Ball
+        const ball = {
+            x: canvas.width/2,
+            y: canvas.height/2,
+            radius: 10,
+            speed: 7,
+            velocityX: 5,
+            velocityY: 5,
+            color: "#fff" // Weißer Ball
+        };
+
+        // Das Netz in der Mitte
+        const net = {
+            x: (canvas.width - 2)/2,
+            y: 0,
+            width: 2,
+            height: 10,
+            color: "WHITE"
+        };
+
+        // Funktion zum Zeichnen von Rechtecken (Schläger, Netz)
+        function drawRect(x, y, w, h, color){
+            ctx.fillStyle = color;
+            ctx.fillRect(x, y, w, h);
+        }
+
+        // Funktion zum Zeichnen von Kreisen (Ball)
+        function drawArc(x, y, r, color){
+            ctx.fillStyle = color;
+            ctx.beginPath();
+            ctx.arc(x, y, r, 0, Math.PI*2, true);
+            ctx.closePath();
+            ctx.fill();
+        }
+
+        // Steuerung mit der Maus
+        canvas.addEventListener("mousemove", getMousePos);
+
+        function getMousePos(evt){
+            let rect = canvas.getBoundingClientRect();
+            
+            // Berechnet die Mausposition relativ zum Canvas
+            user.y = evt.clientY - rect.top - user.height/2;
+
+            // Verhindert, dass der Schläger das Spielfeld verlässt
+            if (user.y < 0) user.y = 0;
+            if (user.y + user.height > canvas.height) user.y = canvas.height - user.height;
+        }
+
+        // Funktion zum Zurücksetzen des Balls nach einem Punkt
+        function resetBall(){
+            ball.x = canvas.width/2;
+            ball.y = canvas.height/2;
+            ball.velocityX = -ball.velocityX; // Richtung ändern
+            ball.speed = 7; // Geschwindigkeit zurücksetzen
+        }
+
+        // Zeichnen des Netzes
+        function drawNet(){
+            for(let i = 0; i <= canvas.height; i+=15){
+                drawRect(net.x, net.y + i, net.width, net.height, net.color);
+            }
+        }
+
+        // Zeichnen des Punktestands
+        function drawText(text, x, y){
+            ctx.fillStyle = "#FFF";
+            ctx.font = "60px monospace";
+            ctx.fillText(text, x, y);
+        }
+
+        // Kollisionserkennung
+        function collision(b, p){
+            p.top = p.y;
+            p.bottom = p.y + p.height;
+            p.left = p.x;
+            p.right = p.x + p.width;
+
+            b.top = b.y - b.radius;
+            b.bottom = b.y + b.radius;
+            b.left = b.x - b.radius;
+            b.right = b.x + b.radius;
+
+            return p.left < b.right && p.top < b.bottom && p.right > b.left && p.bottom > b.top;
+        }
+
+        // Update Funktion: Berechnet Bewegungen, Physik und KI
+        function update(){
+            
+            // Ball bewegen
+            ball.x += ball.velocityX;
+            ball.y += ball.velocityY;
+            
+            // Einfache KI für den Computer
+            // Der Computer folgt dem Ball, aber mit einer Verzögerung (Lerp)
+            com.y += (ball.y - (com.y + com.height/2)) * COMPUTER_LEVEL;
+
+            // Wände oben und unten (Ball prallt ab)
+            if(ball.y - ball.radius < 0 || ball.y + ball.radius > canvas.height){
+                ball.velocityY = -ball.velocityY;
+            }
+
+            // Prüfen, welcher Spieler den Ball trifft
+            let player = (ball.x + ball.radius < canvas.width/2) ? user : com;
+
+            if(collision(ball, player)){
+                // Wo wurde der Schläger getroffen?
+                let collidePoint = (ball.y - (player.y + player.height/2));
+                // Normalisieren des Werts (-1 bis 1)
+                collidePoint = collidePoint / (player.height/2);
+
+                // Winkel berechnen (Maximal 45 Grad = Math.PI/4)
+                let angleRad = (Math.PI/4) * collidePoint;
+
+                // Richtung basierend auf dem Spieler ändern
+                let direction = (ball.x + ball.radius < canvas.width/2) ? 1 : -1;
+                
+                // Neue Geschwindigkeit berechnen
+                ball.velocityX = direction * ball.speed * Math.cos(angleRad);
+                ball.velocityY = ball.speed * Math.sin(angleRad);
+
+                // Geschwindigkeit erhöhen bei jedem Treffer (Spannung!)
+                ball.speed += 0.2;
+            }
+
+            // Punktesystem
+            if(ball.x - ball.radius < 0){
+                com.score++;
+                resetBall();
+            } else if(ball.x + ball.radius > canvas.width){
+                user.score++;
+                resetBall();
+            }
+        }
+
+        // Render Funktion: Zeichnet alles auf den Bildschirm
+        function render(){
+            // 1. Das Canvas leeren (Schwarzes Rechteck)
+            drawRect(0, 0, canvas.width, canvas.height, "#000");
+
+            // 2. Punktestand zeichnen
+            drawText(user.score, canvas.width/4, canvas.height/5);
+            drawText(com.score, 3*canvas.width/4, canvas.height/5);
+
+            // 3. Netz zeichnen
+            drawNet();
+
+            // 4. Schläger zeichnen
+            drawRect(user.x, user.y, user.width, user.height, user.color);
+            drawRect(com.x, com.y, com.width, com.height, com.color);
+
+            // 5. Ball zeichnen
+            drawArc(ball.x, ball.y, ball.radius, ball.color);
+        }
+
+        // Die Spielschleife (Game Loop)
+        function game(){
+            update();
+            render();
+        }
+
+        // Ruft die game() Funktion 60 mal pro Sekunde auf
+        const framePerSecond = FPS;
+        setInterval(game, 1000/framePerSecond);
+
+    </script>
+</body>
+</html>

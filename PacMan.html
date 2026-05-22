@@ -1,0 +1,381 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <title>Pac-Man (Final Fix)</title>
+    <style>
+        body {
+            background-color: #111;
+            color: white;
+            font-family: 'Courier New', Courier, monospace;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            margin: 0;
+            overflow: hidden;
+        }
+        h1 { margin: 10px 0; color: #FFD700; text-transform: uppercase; letter-spacing: 3px; }
+        #game-container { position: relative; border: 4px solid #222; box-shadow: 0 0 20px rgba(0,0,0,0.5); }
+        canvas { display: block; background-color: black; }
+        #score-board {
+            display: flex; justify-content: space-between;
+            width: 380px; font-size: 20px; margin-bottom: 10px;
+        }
+        #overlay {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0, 0, 0, 0.85);
+            display: none;
+            flex-direction: column; align-items: center; justify-content: center;
+            z-index: 10;
+        }
+        button {
+            padding: 10px 20px; font-size: 18px; cursor: pointer;
+            background: #FFD700; border: none; font-weight: bold; margin-top: 20px;
+            border-radius: 5px;
+        }
+        button:hover { background: #e5c100; }
+    </style>
+</head>
+<body>
+
+    <h1>Pac-Man</h1>
+    
+    <div id="score-board">
+        <span>Score: <span id="score">0</span></span>
+        <span>High: <span id="highscore">0</span></span>
+    </div>
+
+    <div id="game-container">
+        <canvas id="gameCanvas"></canvas>
+        <div id="overlay">
+            <h2 id="status-text" style="font-size: 40px; margin: 0; color: white;">GAME OVER</h2>
+            <button onclick="startGame()">Neustart</button>
+        </div>
+    </div>
+    
+    <p style="font-size: 14px; color: #888; margin-top: 10px;">Steuerung: Pfeiltasten</p>
+
+<script>
+window.onload = function() {
+    try {
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const scoreEl = document.getElementById('score');
+        const highScoreEl = document.getElementById('highscore');
+        const overlay = document.getElementById('overlay');
+        const statusText = document.getElementById('status-text');
+
+        const TILE_SIZE = 20;
+
+        // 1=Wand, 0=Punkt, 2=Leer/Weg
+        const mapLayout = [
+            [1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1],
+            [1,0,0,0,0,0,0,0,0,1,0,0,0,0,0,0,0,0,1],
+            [1,0,1,1,0,1,1,1,0,1,0,1,1,1,0,1,1,0,1],
+            [1,0,1,1,0,1,1,1,0,1,0,1,1,1,0,1,1,0,1],
+            [1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1], // Zeile 4 (Index) - Hier spawnen Geister sicher
+            [1,0,1,1,0,1,0,1,1,1,1,1,0,1,0,1,1,0,1],
+            [1,0,0,0,0,1,0,0,0,1,0,0,0,1,0,0,0,0,1],
+            [1,1,1,1,0,1,1,1,2,1,2,1,1,1,0,1,1,1,1],
+            [2,2,2,1,0,1,2,2,2,2,2,2,2,1,0,1,2,2,2],
+            [1,1,1,1,0,1,2,1,2,2,2,1,2,1,0,1,1,1,1],
+            [2,2,2,2,0,2,2,1,2,2,2,1,2,2,0,2,2,2,2],
+            [1,1,1,1,0,1,2,1,1,1,1,1,2,1,0,1,1,1,1],
+            [2,2,2,1,0,1,2,2,2,2,2,2,2,1,0,1,2,2,2],
+            [1,1,1,1,0,1,0,1,1,1,1,1,0,1,0,1,1,1,1],
+            [1,0,0,0,0,0,0,0,0,1,0,0,0,0,0,0,0,0,1],
+            [1,0,1,1,0,1,1,1,0,1,0,1,1,1,0,1,1,0,1],
+            [1,0,0,1,0,0,0,0,0,2,0,0,0,0,0,1,0,0,1],
+            [1,1,0,1,0,1,0,1,1,1,1,1,0,1,0,1,0,1,1],
+            [1,0,0,0,0,1,0,0,0,1,0,0,0,1,0,0,0,0,1],
+            [1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1]
+        ];
+
+        const ROWS = mapLayout.length;
+        const COLS = mapLayout[0].length;
+
+        canvas.width = COLS * TILE_SIZE;
+        canvas.height = ROWS * TILE_SIZE;
+        
+        document.getElementById('score-board').style.width = canvas.width + 'px';
+
+        let score = 0;
+        let highScore = 0;
+        try { highScore = localStorage.getItem('pacman_highscore') || 0; } catch(e){}
+        highScoreEl.innerText = highScore;
+
+        let gameRunning = false;
+        let gameLoopId;
+        
+        let walls = [];
+        let pellets = [];
+        let ghosts = [];
+        // Pacman Setup
+        let pacman = { 
+            x:0, y:0, vx:0, vy:0, 
+            nextVx:0, nextVy:0, 
+            speed:2, // WICHTIG: Muss Teiler von TILE_SIZE (20) sein
+            angle:0, mouth:0.2, mouthDir:0.02 
+        };
+
+        class Wall {
+            constructor(x, y) { this.x=x; this.y=y; }
+            draw() {
+                ctx.fillStyle = '#1919A6';
+                ctx.fillRect(this.x, this.y, TILE_SIZE, TILE_SIZE);
+                ctx.strokeStyle = '#000';
+                ctx.strokeRect(this.x+4, this.y+4, TILE_SIZE-8, TILE_SIZE-8);
+            }
+        }
+
+        class Pellet {
+            constructor(x, y) { this.x=x+TILE_SIZE/2; this.y=y+TILE_SIZE/2; }
+            draw() {
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, 3, 0, Math.PI*2);
+                ctx.fillStyle = '#ffb8ae';
+                ctx.fill();
+            }
+        }
+
+        class Ghost {
+            constructor(x, y, color) {
+                this.x = x + TILE_SIZE/2; 
+                this.y = y + TILE_SIZE/2;
+                this.color = color;
+                // Initialer Schubs: Zufällig Links oder Rechts
+                this.vx = Math.random() > 0.5 ? 1 : -1; 
+                this.vy = 0;
+                this.speed = 2; // WICHTIG: Gleiche Speed wie Pacman/Raster
+            }
+            draw() {
+                ctx.fillStyle = this.color;
+                ctx.beginPath();
+                ctx.arc(this.x, this.y-2, 8, Math.PI, 0);
+                ctx.lineTo(this.x+8, this.y+8);
+                ctx.lineTo(this.x-8, this.y+8);
+                ctx.fill();
+                // Augen
+                ctx.fillStyle='white';
+                ctx.beginPath(); ctx.arc(this.x-3, this.y-3, 2.5, 0, Math.PI*2); ctx.fill();
+                ctx.beginPath(); ctx.arc(this.x+3, this.y-3, 2.5, 0, Math.PI*2); ctx.fill();
+                // Pupillen
+                ctx.fillStyle='black';
+                ctx.beginPath(); ctx.arc(this.x-3+(this.vx*2), this.y-3+(this.vy*2), 1.2, 0, Math.PI*2); ctx.fill();
+                ctx.beginPath(); ctx.arc(this.x+3+(this.vx*2), this.y-3+(this.vy*2), 1.2, 0, Math.PI*2); ctx.fill();
+            }
+            update() {
+                // 1. Grid Check
+                // Sind wir genau in der Mitte einer Kachel?
+                const remainderX = this.x % TILE_SIZE;
+                const remainderY = this.y % TILE_SIZE;
+                const mid = TILE_SIZE / 2;
+                
+                // Toleranz fast 0, da wir Integer Speed nutzen
+                const atCenter = (Math.abs(remainderX - mid) < 0.1) && (Math.abs(remainderY - mid) < 0.1);
+
+                if (atCenter) {
+                    // Mögliche Richtungen prüfen
+                    const options = [];
+                    // Oben, Unten, Links, Rechts prüfen
+                    if (!isWallPixel(this.x, this.y - TILE_SIZE)) options.push({x:0, y:-1});
+                    if (!isWallPixel(this.x, this.y + TILE_SIZE)) options.push({x:0, y:1});
+                    if (!isWallPixel(this.x - TILE_SIZE, this.y)) options.push({x:-1, y:0});
+                    if (!isWallPixel(this.x + TILE_SIZE, this.y)) options.push({x:1, y:0});
+
+                    // Rückwärtsbewegung verhindern (außer Sackgasse)
+                    const forwardOptions = options.filter(o => !(o.x === -this.vx && o.y === -this.vy));
+                    
+                    let choice = null;
+                    if (forwardOptions.length > 0) {
+                        // Zufällige Wahl aus vorwärts Optionen
+                        choice = forwardOptions[Math.floor(Math.random() * forwardOptions.length)];
+                    } else if (options.length > 0) {
+                        // Sackgasse: Muss umdrehen
+                        choice = options[0];
+                    }
+
+                    if (choice) {
+                        this.vx = choice.x;
+                        this.vy = choice.y;
+                    }
+                }
+
+                // 2. Bewegen
+                this.x += this.vx * this.speed;
+                this.y += this.vy * this.speed;
+
+                // 3. Wenn wir gegen eine Wand laufen (Fehlerkorrektur), sofort umdrehen
+                // (Prüft den Punkt VOR dem Geist)
+                let nextX = this.x + (this.vx * (TILE_SIZE/2 + 2));
+                let nextY = this.y + (this.vy * (TILE_SIZE/2 + 2));
+                if (isWallPixel(nextX, nextY) && !atCenter) {
+                     this.vx *= -1;
+                     this.vy *= -1;
+                }
+                
+                // Kollision mit Pacman
+                if (Math.hypot(this.x - pacman.x, this.y - pacman.y) < TILE_SIZE) {
+                    endGame(false);
+                }
+            }
+        }
+
+        function isWallPixel(x, y) {
+            let c = Math.floor(x / TILE_SIZE);
+            let r = Math.floor(y / TILE_SIZE);
+            if (r < 0 || r >= ROWS || c < 0 || c >= COLS) return true;
+            return mapLayout[r][c] === 1;
+        }
+
+        window.startGame = function() {
+            if (gameLoopId) cancelAnimationFrame(gameLoopId);
+            
+            walls = []; pellets = []; ghosts = [];
+            score = 0; scoreEl.innerText = 0;
+            overlay.style.display = 'none';
+            gameRunning = true;
+
+            const ghostColors = ['red', 'pink', 'cyan', 'orange'];
+            
+            // Map bauen
+            for(let r=0; r<ROWS; r++) {
+                for(let c=0; c<COLS; c++) {
+                    let type = mapLayout[r][c];
+                    let x = c * TILE_SIZE;
+                    let y = r * TILE_SIZE;
+                    
+                    if (type === 1) walls.push(new Wall(x, y));
+                    else if (type === 0) pellets.push(new Pellet(x, y));
+                }
+            }
+            
+            // SPAWN PUNKTE (Manuell gesetzt für Sicherheit)
+            // Pacman unten mittig
+            pacman.x = 9 * TILE_SIZE + TILE_SIZE/2;
+            pacman.y = 15 * TILE_SIZE + TILE_SIZE/2;
+            pacman.vx = 0; pacman.vy = 0; 
+            pacman.nextVx = 0; pacman.nextVy = 0;
+            pacman.mouth = 0.2;
+
+            // Geister oben verteilen (Reihe 4, Spalten 8,9,10,11)
+            // Damit sie sofort frei sind und nicht in einer Box starten
+            ghosts.push(new Ghost(8 * TILE_SIZE, 4 * TILE_SIZE, 'red'));
+            ghosts.push(new Ghost(9 * TILE_SIZE, 4 * TILE_SIZE, 'pink'));
+            ghosts.push(new Ghost(10 * TILE_SIZE, 4 * TILE_SIZE, 'cyan'));
+            ghosts.push(new Ghost(1 * TILE_SIZE, 1 * TILE_SIZE, 'orange')); // Oben Links
+
+            gameLoop();
+        };
+
+        function endGame(win) {
+            gameRunning = false;
+            statusText.innerText = win ? "GEWONNEN!" : "GAME OVER";
+            statusText.style.color = win ? "#4BB543" : "#FF0000";
+            overlay.style.display = 'flex';
+            try {
+                if(score > highScore) {
+                    highScore = score;
+                    localStorage.setItem('pacman_highscore', highScore);
+                    highScoreEl.innerText = highScore;
+                }
+            } catch(e){}
+        }
+
+        function gameLoop() {
+            if (!gameRunning) return;
+            
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            // PACMAN LOGIC
+            const mid = TILE_SIZE / 2;
+            const pGridX = Math.round((pacman.x - mid) / TILE_SIZE);
+            const pGridY = Math.round((pacman.y - mid) / TILE_SIZE);
+            const pCenterX = pGridX * TILE_SIZE + mid;
+            const pCenterY = pGridY * TILE_SIZE + mid;
+            
+            const dist = Math.hypot(pacman.x - pCenterX, pacman.y - pCenterY);
+            
+            // Abbiegen
+            if (dist < 2) {
+                if (pacman.nextVx !== 0 || pacman.nextVy !== 0) {
+                    if (!isWallPixel(pCenterX + pacman.nextVx*TILE_SIZE, pCenterY + pacman.nextVy*TILE_SIZE)) {
+                        pacman.vx = pacman.nextVx;
+                        pacman.vy = pacman.nextVy;
+                        pacman.nextVx = 0; pacman.nextVy = 0;
+                        pacman.x = pCenterX;
+                        pacman.y = pCenterY;
+                    }
+                }
+                // Stop an Wand
+                if (isWallPixel(pCenterX + pacman.vx*TILE_SIZE, pCenterY + pacman.vy*TILE_SIZE)) {
+                    pacman.vx = 0; pacman.vy = 0;
+                    pacman.x = pCenterX;
+                    pacman.y = pCenterY;
+                }
+            }
+
+            pacman.x += pacman.vx * pacman.speed;
+            pacman.y += pacman.vy * pacman.speed;
+            
+            // Tunnel
+            if (pacman.x < 0) pacman.x = canvas.width;
+            if (pacman.x > canvas.width) pacman.x = 0;
+
+            // Essen
+            for(let i = pellets.length-1; i>=0; i--) {
+                if (Math.hypot(pellets[i].x - pacman.x, pellets[i].y - pacman.y) < 8) {
+                    pellets.splice(i, 1);
+                    score += 10;
+                    scoreEl.innerText = score;
+                }
+            }
+            if (pellets.length === 0) endGame(true);
+
+            // ZEICHNEN
+            walls.forEach(w => w.draw());
+            pellets.forEach(p => p.draw());
+            
+            pacman.mouth += pacman.mouthDir;
+            if(pacman.mouth > 0.25 || pacman.mouth < 0.02) pacman.mouthDir *= -1;
+            
+            if(pacman.vx > 0) pacman.angle = 0;
+            if(pacman.vx < 0) pacman.angle = Math.PI;
+            if(pacman.vy > 0) pacman.angle = Math.PI/2;
+            if(pacman.vy < 0) pacman.angle = -Math.PI/2;
+
+            ctx.save();
+            ctx.translate(pacman.x, pacman.y);
+            ctx.rotate(pacman.angle);
+            ctx.beginPath();
+            ctx.arc(0, 0, 8, pacman.mouth, Math.PI*2 - pacman.mouth);
+            ctx.lineTo(0, 0);
+            ctx.fillStyle = '#FFFF00';
+            ctx.fill();
+            ctx.restore();
+
+            // GHOSTS
+            ghosts.forEach(g => { g.update(); g.draw(); });
+
+            gameLoopId = requestAnimationFrame(gameLoop);
+        }
+
+        window.addEventListener('keydown', e => {
+            if(["ArrowUp","ArrowDown","ArrowLeft","ArrowRight"].includes(e.code)) e.preventDefault();
+            if (e.code === 'ArrowUp') { pacman.nextVx = 0; pacman.nextVy = -1; }
+            else if (e.code === 'ArrowDown') { pacman.nextVx = 0; pacman.nextVy = 1; }
+            else if (e.code === 'ArrowLeft') { pacman.nextVx = -1; pacman.nextVy = 0; }
+            else if (e.code === 'ArrowRight') { pacman.nextVx = 1; pacman.nextVy = 0; }
+        });
+
+        startGame();
+
+    } catch(err) {
+        alert("ERROR: " + err.message);
+    }
+};
+</script>
+</body>
+</html>

@@ -1,0 +1,485 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Game of Life - High Performance (Fixed)</title>
+    <style>
+        :root {
+            --bg-color: #050505;
+            --panel-color: #1a1a1a;
+            --text-color: #cccccc;
+            --accent-color: #00ff9d;
+            --accent-hover: #00cc7d;
+        }
+
+        body {
+            margin: 0;
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            overflow: hidden;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        /* --- Header / UI --- */
+        header {
+            height: 50px;
+            padding: 0 20px;
+            background-color: var(--panel-color);
+            border-bottom: 1px solid #333;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            z-index: 100;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.5);
+            user-select: none;
+        }
+
+        h1 { margin: 0; font-size: 1.1rem; color: var(--accent-color); font-weight: 700; letter-spacing: 0.5px; }
+
+        .controls { display: flex; align-items: center; gap: 10px; }
+        .stats { font-family: 'Courier New', monospace; font-size: 0.9rem; color: #888; margin-right: 15px; min-width: 80px;}
+
+        button {
+            background: #2a2a2a;
+            color: #eee;
+            border: 1px solid #444;
+            padding: 6px 14px;
+            border-radius: 4px;
+            font-size: 0.8rem;
+            cursor: pointer;
+            transition: all 0.1s;
+        }
+        button:hover { background: #3a3a3a; border-color: #666; }
+        button:active { transform: translateY(1px); }
+        
+        button.primary { background: var(--accent-color); color: #000; border: none; font-weight: bold; }
+        button.primary:hover { background: var(--accent-hover); }
+        
+        /* Zustand für aktiven Button */
+        button.active { background: #ff4757 !important; color: white !important; border: none; }
+        button.active:hover { background: #e84118 !important; }
+
+        input[type=range] {
+            -webkit-appearance: none;
+            width: 100px;
+            background: transparent;
+        }
+        input[type=range]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            height: 14px; width: 14px;
+            border-radius: 50%;
+            background: var(--accent-color);
+            cursor: pointer;
+            margin-top: -5px;
+        }
+        input[type=range]::-webkit-slider-runnable-track {
+            width: 100%; height: 4px;
+            background: #444;
+            border-radius: 2px;
+        }
+
+        /* --- Canvas Area --- */
+        #viewport {
+            flex-grow: 1;
+            position: relative;
+            background-color: #000;
+            overflow: hidden;
+            cursor: crosshair;
+        }
+
+        canvas { display: block; }
+
+        /* HUD */
+        #hud {
+            position: absolute;
+            bottom: 15px;
+            right: 20px;
+            background: rgba(0,0,0,0.8);
+            border: 1px solid #333;
+            padding: 8px 12px;
+            border-radius: 6px;
+            font-family: monospace;
+            font-size: 11px;
+            color: #777;
+            pointer-events: none;
+            user-select: none;
+        }
+        #hud span { color: var(--accent-color); }
+    </style>
+</head>
+<body>
+
+    <header>
+        <div style="display:flex; align-items:center; gap:15px;">
+            <h1>GoL Smooth</h1>
+            <div style="font-size:0.75rem; color:#666; display:none; @media(min-width:600px){display:block;}">
+                Mausrad: Zoom • Rechtsklick: Pan • Linksklick: Malen
+            </div>
+        </div>
+
+        <div class="controls">
+            <span class="stats">Gen: <span id="gen-disp">0</span></span>
+            
+            <span style="font-size:0.8rem; color:#888;">Speed:</span>
+            <input type="range" id="speed-slider" min="0" max="60" value="55">
+            
+            <button onclick="game.resetCamera()">Reset Cam</button>
+            <button onclick="game.clear()">Clear</button>
+            <button onclick="game.randomize()">Random</button>
+            <button id="btn-toggle" class="primary" onclick="game.toggle()">Start</button>
+        </div>
+    </header>
+
+    <div id="viewport">
+        <canvas id="main-canvas"></canvas>
+        <div id="hud">
+            Zoom: <span id="hud-zoom">1.00</span>x | 
+            Pos: <span id="hud-pos">0,0</span> | 
+            FPS: <span id="hud-fps">0</span>
+        </div>
+    </div>
+
+    <script>
+        /**
+         * GAME ENGINE - BITMAP RENDERING APPROACH
+         */
+        // WICHTIG: Kleingeschrieben 'game', damit es zum HTML passt
+        const game = function() {
+            // --- Konfiguration ---
+            const GRID_SIZE = 1000; 
+            const COLOR_ALIVE = 0xFF9DFF00; // Grün (ABGR)
+            const COLOR_DEAD = 0xFF050505;  // Fast Schwarz
+
+            // --- State ---
+            let grid = new Uint8Array(GRID_SIZE * GRID_SIZE);
+            let nextGrid = new Uint8Array(GRID_SIZE * GRID_SIZE);
+            
+            let isRunning = false;
+            let generation = 0;
+            
+            // --- Rendering setup ---
+            const canvas = document.getElementById('main-canvas');
+            const ctx = canvas.getContext('2d', { alpha: false });
+            
+            // Buffer
+            const bufferCanvas = document.createElement('canvas');
+            bufferCanvas.width = GRID_SIZE;
+            bufferCanvas.height = GRID_SIZE;
+            const bufferCtx = bufferCanvas.getContext('2d', { alpha: false });
+            
+            const imgData = bufferCtx.createImageData(GRID_SIZE, GRID_SIZE);
+            const buf32 = new Uint32Array(imgData.data.buffer); 
+
+            // Kamera
+            let camera = { x: GRID_SIZE/2, y: GRID_SIZE/2, zoom: 2 };
+            let mouse = { x: 0, y: 0, downLeft: false, downRight: false, lastX: 0, lastY: 0 };
+            
+            // Timing
+            let lastTime = 0;
+            let frameCount = 0;
+            let lastFpsTime = 0;
+
+            // UI Refs
+            const ui = {
+                gen: document.getElementById('gen-disp'),
+                zoom: document.getElementById('hud-zoom'),
+                pos: document.getElementById('hud-pos'),
+                fps: document.getElementById('hud-fps'),
+                btn: document.getElementById('btn-toggle'),
+                speed: document.getElementById('speed-slider')
+            };
+
+            // --- Funktionen ---
+
+            function init() {
+                resize();
+                window.addEventListener('resize', resize);
+                setupInput();
+                randomize(); // Startet automatisch mit Random
+                requestAnimationFrame(loop);
+            }
+
+            function resize() {
+                canvas.width = canvas.parentElement.clientWidth;
+                canvas.height = canvas.parentElement.clientHeight;
+                ctx.imageSmoothingEnabled = false; 
+                render();
+            }
+
+            // Stoppt das Spiel (Hilfsfunktion)
+            function stopGame() {
+                isRunning = false;
+                ui.btn.innerText = "Start";
+                ui.btn.classList.remove('active');
+                ui.btn.classList.add('primary');
+            }
+
+            function randomize() {
+                stopGame();
+                for(let i=0; i<grid.length; i++) {
+                    grid[i] = Math.random() < 0.15 ? 1 : 0;
+                }
+                generation = 0;
+                ui.gen.innerText = "0";
+                renderBuffer(); 
+                render();
+            }
+
+            function clear() {
+                stopGame();
+                grid.fill(0); // Array leeren
+                generation = 0;
+                ui.gen.innerText = "0";
+                renderBuffer();
+                render();
+            }
+
+            function toggle() {
+                isRunning = !isRunning;
+                if (isRunning) {
+                    ui.btn.innerText = "Pause";
+                    ui.btn.classList.add('active');
+                    ui.btn.classList.remove('primary');
+                } else {
+                    stopGame();
+                }
+            }
+
+            function resetCamera() {
+                camera.x = GRID_SIZE / 2;
+                camera.y = GRID_SIZE / 2;
+                camera.zoom = 2;
+                render();
+            }
+
+            // --- Simulation ---
+            function compute() {
+                let hasChanges = false;
+                
+                for (let y = 0; y < GRID_SIZE; y++) {
+                    const yUp = ((y - 1 + GRID_SIZE) % GRID_SIZE) * GRID_SIZE;
+                    const yCurr = y * GRID_SIZE;
+                    const yDown = ((y + 1) % GRID_SIZE) * GRID_SIZE;
+
+                    for (let x = 0; x < GRID_SIZE; x++) {
+                        const idx = yCurr + x;
+                        const self = grid[idx];
+                        
+                        const xLeft = (x - 1 + GRID_SIZE) % GRID_SIZE;
+                        const xRight = (x + 1) % GRID_SIZE;
+
+                        const neighbors = 
+                            grid[yUp + xLeft]   + grid[yUp + x]   + grid[yUp + xRight] +
+                            grid[yCurr + xLeft] +                   grid[yCurr + xRight] +
+                            grid[yDown + xLeft] + grid[yDown + x] + grid[yDown + xRight];
+
+                        if (self === 0) {
+                            if (neighbors === 3) { nextGrid[idx] = 1; hasChanges = true; }
+                            else { nextGrid[idx] = 0; }
+                        } else {
+                            if (neighbors === 2 || neighbors === 3) { nextGrid[idx] = 1; }
+                            else { nextGrid[idx] = 0; hasChanges = true; }
+                        }
+                    }
+                }
+
+                [grid, nextGrid] = [nextGrid, grid];
+                
+                if (hasChanges) generation++;
+                ui.gen.innerText = generation;
+                
+                renderBuffer();
+            }
+
+            function renderBuffer() {
+                for (let i = 0; i < grid.length; i++) {
+                    buf32[i] = grid[i] ? COLOR_ALIVE : COLOR_DEAD;
+                }
+                bufferCtx.putImageData(imgData, 0, 0);
+            }
+
+            // --- Rendering ---
+            function render() {
+                // Background Clean
+                ctx.fillStyle = '#050505';
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+                const cx = canvas.width / 2;
+                const cy = canvas.height / 2;
+
+                // Kamera Normalisierung
+                camera.x = ((camera.x % GRID_SIZE) + GRID_SIZE) % GRID_SIZE;
+                camera.y = ((camera.y % GRID_SIZE) + GRID_SIZE) % GRID_SIZE;
+
+                const worldSize = GRID_SIZE * camera.zoom;
+                
+                // Offset berechnen
+                // Ziel: camera.x/y soll in der Mitte (cx, cy) sein
+                const offsetX = -camera.x * camera.zoom;
+                const offsetY = -camera.y * camera.zoom;
+
+                const startX = cx + offsetX;
+                const startY = cy + offsetY;
+
+                // 3x3 Tiling
+                for (let ty = -1; ty <= 1; ty++) {
+                    for (let tx = -1; tx <= 1; tx++) {
+                        const drawX = startX + (tx * worldSize);
+                        const drawY = startY + (ty * worldSize);
+                        
+                        // Culling
+                        if (drawX + worldSize > 0 && drawX < canvas.width &&
+                            drawY + worldSize > 0 && drawY < canvas.height) {
+                            
+                            ctx.drawImage(bufferCanvas, drawX, drawY, worldSize, worldSize);
+
+                            if (camera.zoom > 15) {
+                                drawGridLines(drawX, drawY, worldSize);
+                            }
+                        }
+                    }
+                }
+
+                ui.zoom.innerText = camera.zoom.toFixed(2);
+                ui.pos.innerText = Math.floor(camera.x) + "," + Math.floor(camera.y);
+            }
+
+            function drawGridLines(x, y, size) {
+                ctx.strokeStyle = '#222';
+                ctx.lineWidth = 1;
+                ctx.beginPath();
+                const cellSize = camera.zoom;
+                // Vertikal
+                for (let i = 0; i <= GRID_SIZE; i++) {
+                    const lx = x + i * cellSize;
+                    if (lx >= -1 && lx <= canvas.width + 1) {
+                        ctx.moveTo(lx, Math.max(0, y));
+                        ctx.lineTo(lx, Math.min(canvas.height, y + size));
+                    }
+                }
+                // Horizontal
+                for (let i = 0; i <= GRID_SIZE; i++) {
+                    const ly = y + i * cellSize;
+                    if (ly >= -1 && ly <= canvas.height + 1) {
+                        ctx.moveTo(Math.max(0, x), ly);
+                        ctx.lineTo(Math.min(canvas.width, x + size), ly);
+                    }
+                }
+                ctx.stroke();
+            }
+
+            // --- Loop ---
+            function loop(timestamp) {
+                frameCount++;
+                if (timestamp - lastFpsTime >= 1000) {
+                    ui.fps.innerText = frameCount;
+                    frameCount = 0;
+                    lastFpsTime = timestamp;
+                }
+
+                if (isRunning) {
+                    const speedVal = parseInt(ui.speed.value);
+                    const delay = Math.max(0, (60 - speedVal) * 5); 
+
+                    if (timestamp - lastTime > delay) {
+                        compute();
+                        lastTime = timestamp;
+                        if (!mouse.downLeft && !mouse.downRight) render(); 
+                    }
+                }
+                
+                requestAnimationFrame(loop);
+            }
+
+            // --- Input ---
+            function setupInput() {
+                canvas.addEventListener('mousedown', e => {
+                    if (e.button === 0) { mouse.downLeft = true; handlePaint(e); }
+                    if (e.button === 2) { mouse.downRight = true; canvas.style.cursor = 'grabbing'; }
+                    mouse.lastX = e.clientX;
+                    mouse.lastY = e.clientY;
+                });
+
+                window.addEventListener('mouseup', () => {
+                    mouse.downLeft = false;
+                    mouse.downRight = false;
+                    canvas.style.cursor = 'crosshair';
+                });
+
+                canvas.addEventListener('contextmenu', e => e.preventDefault());
+
+                canvas.addEventListener('mousemove', e => {
+                    if (mouse.downRight) {
+                        const dx = e.clientX - mouse.lastX;
+                        const dy = e.clientY - mouse.lastY;
+                        camera.x -= dx / camera.zoom;
+                        camera.y -= dy / camera.zoom;
+                        requestAnimationFrame(render);
+                    }
+                    if (mouse.downLeft) {
+                        handlePaint(e);
+                    }
+                    mouse.lastX = e.clientX;
+                    mouse.lastY = e.clientY;
+                });
+
+                canvas.addEventListener('wheel', e => {
+                    e.preventDefault();
+                    const zoomIntensity = 0.1;
+                    const wheel = e.deltaY < 0 ? 1 : -1;
+                    
+                    const oldZoom = camera.zoom;
+                    let newZoom = oldZoom * (1 + wheel * zoomIntensity);
+                    newZoom = Math.max(0.1, Math.min(50, newZoom)); 
+
+                    const rect = canvas.getBoundingClientRect();
+                    const mx = e.clientX - rect.left;
+                    const my = e.clientY - rect.top;
+                    const cx = canvas.width / 2;
+                    const cy = canvas.height / 2;
+
+                    // Zoom towards mouse
+                    const worldMouseX = camera.x + (mx - cx) / oldZoom;
+                    const worldMouseY = camera.y + (my - cy) / oldZoom;
+
+                    camera.zoom = newZoom;
+
+                    camera.x = worldMouseX - (mx - cx) / newZoom;
+                    camera.y = worldMouseY - (my - cy) / newZoom;
+
+                    requestAnimationFrame(render);
+                }, { passive: false });
+            }
+
+            function handlePaint(e) {
+                const rect = canvas.getBoundingClientRect();
+                const mx = e.clientX - rect.left;
+                const my = e.clientY - rect.top;
+                const cx = canvas.width / 2;
+                const cy = canvas.height / 2;
+
+                const worldX = Math.floor(camera.x + (mx - cx) / camera.zoom);
+                const worldY = Math.floor(camera.y + (my - cy) / camera.zoom);
+
+                const gx = ((worldX % GRID_SIZE) + GRID_SIZE) % GRID_SIZE;
+                const gy = ((worldY % GRID_SIZE) + GRID_SIZE) % GRID_SIZE;
+
+                grid[gy * GRID_SIZE + gx] = 1;
+                renderBuffer();
+                render();
+            }
+
+            // Public API
+            return { init, toggle, clear, randomize, resetCamera };
+        }();
+
+        // Start
+        game.init();
+
+    </script>
+</body>
+</html>

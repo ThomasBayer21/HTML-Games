@@ -1,0 +1,268 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Tic Tac Toe - Unbesiegbarer Bot</title>
+    <style>
+        :root {
+            --bg-color: #121212;
+            --text-color: #e0e0e0;
+            --cell-bg: #1e1e1e;
+            --cell-hover: #2c2c2c;
+            --accent-x: #ff4757;
+            --accent-o: #2ed573;
+        }
+
+        body {
+            font-family: 'Segoe UI', sans-serif;
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            margin: 0;
+            user-select: none;
+        }
+
+        h1 { margin-bottom: 10px; }
+
+        .status {
+            margin-bottom: 20px;
+            font-size: 1.2rem;
+            min-height: 1.5em;
+            font-weight: bold;
+        }
+
+        .board {
+            display: grid;
+            grid-template-columns: repeat(3, 100px);
+            gap: 10px;
+            background-color: #333;
+            padding: 10px;
+            border-radius: 10px;
+        }
+
+        .cell {
+            background-color: var(--cell-bg);
+            width: 100px;
+            height: 100px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 3.5rem;
+            font-weight: bold;
+            cursor: pointer;
+            border-radius: 5px;
+        }
+
+        .cell:hover { background-color: var(--cell-hover); }
+        .cell.x { color: var(--accent-x); }
+        .cell.o { color: var(--accent-o); }
+
+        /* Sperrt das Brett während der Bot denkt */
+        .board.locked { pointer-events: none; opacity: 0.7; }
+
+        .restart-btn {
+            margin-top: 25px;
+            padding: 10px 25px;
+            font-size: 1rem;
+            background-color: #3742fa;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+        }
+        .restart-btn:hover { background-color: #5352ed; }
+    </style>
+</head>
+<body>
+
+    <h1>Tic Tac Toe</h1>
+    <div class="status" id="status">Du bist dran (X)</div>
+    
+    <div class="board" id="board">
+        <div class="cell" onclick="handleCellClick(0)"></div>
+        <div class="cell" onclick="handleCellClick(1)"></div>
+        <div class="cell" onclick="handleCellClick(2)"></div>
+        <div class="cell" onclick="handleCellClick(3)"></div>
+        <div class="cell" onclick="handleCellClick(4)"></div>
+        <div class="cell" onclick="handleCellClick(5)"></div>
+        <div class="cell" onclick="handleCellClick(6)"></div>
+        <div class="cell" onclick="handleCellClick(7)"></div>
+        <div class="cell" onclick="handleCellClick(8)"></div>
+    </div>
+
+    <button class="restart-btn" onclick="restartGame()">Neues Spiel</button>
+
+    <script>
+        let boardState = ["", "", "", "", "", "", "", "", ""];
+        let gameActive = true;
+        const human = 'X';
+        const bot = 'O';
+        const statusDisplay = document.getElementById('status');
+        const boardElement = document.getElementById('board');
+        const cells = document.querySelectorAll('.cell');
+
+        const winConditions = [
+            [0, 1, 2], [3, 4, 5], [6, 7, 8],
+            [0, 3, 6], [1, 4, 7], [2, 5, 8],
+            [0, 4, 8], [2, 4, 6]
+        ];
+
+        function handleCellClick(index) {
+            if (boardState[index] !== "" || !gameActive) return;
+
+            // 1. Spielerzug
+            makeMove(index, human);
+            if (checkGameOver(boardState, human)) return;
+
+            // 2. Botzug vorbereiten
+            gameActive = false; // Klicks sperren
+            statusDisplay.innerText = "Bot denkt nach...";
+            boardElement.classList.add('locked');
+
+            // Timeout damit das UI rendern kann und es natürlicher wirkt
+            setTimeout(() => {
+                try {
+                    // Kopie des Boards für die Berechnung erstellen
+                    const bestMoveIndex = getBestMove([...boardState]); 
+                    makeMove(bestMoveIndex, bot);
+                    
+                    if (!checkGameOver(boardState, bot)) {
+                        // Spiel geht weiter
+                        gameActive = true;
+                        statusDisplay.innerText = "Du bist dran (X)";
+                        boardElement.classList.remove('locked');
+                    }
+                } catch (error) {
+                    console.error("Bot Fehler:", error);
+                    // Fallback: Zufälliger Zug falls KI abstürzt
+                    const emptyIndices = boardState.map((v, i) => v === "" ? i : null).filter(v => v !== null);
+                    if(emptyIndices.length > 0) {
+                        makeMove(emptyIndices[0], bot);
+                        checkGameOver(boardState, bot);
+                        gameActive = true;
+                        statusDisplay.innerText = "Du bist dran (X)";
+                        boardElement.classList.remove('locked');
+                    }
+                }
+            }, 500);
+        }
+
+        function makeMove(index, player) {
+            boardState[index] = player;
+            const cell = cells[index];
+            cell.innerText = player;
+            cell.classList.add(player.toLowerCase());
+        }
+
+        function checkGameOver(board, player) {
+            // Sieg prüfen
+            for (let condition of winConditions) {
+                const [a, b, c] = condition;
+                if (board[a] === player && board[b] === player && board[c] === player) {
+                    endGame(player === human ? "Du hast gewonnen! 🎉" : "Bot hat gewonnen! 🤖", player);
+                    return true;
+                }
+            }
+            // Unentschieden prüfen
+            if (!board.includes("")) {
+                endGame("Unentschieden! 🤝", "draw");
+                return true;
+            }
+            return false;
+        }
+
+        function endGame(message, type) {
+            statusDisplay.innerText = message;
+            gameActive = false;
+            boardElement.classList.remove('locked'); // Schloss entfernen damit man das Ergebnis sieht
+            if (type === human) statusDisplay.style.color = "var(--accent-o)";
+            else if (type === bot) statusDisplay.style.color = "var(--accent-x)";
+        }
+
+        function restartGame() {
+            boardState = ["", "", "", "", "", "", "", "", ""];
+            gameActive = true;
+            statusDisplay.innerText = "Du bist dran (X)";
+            statusDisplay.style.color = "var(--text-color)";
+            boardElement.classList.remove('locked');
+            cells.forEach(cell => {
+                cell.innerText = "";
+                cell.classList.remove('x', 'o');
+            });
+        }
+
+        // --- KI LOGIK (Minimax) ---
+        function getBestMove(board) {
+            // Zuerst prüfen, ob wir sofort gewinnen können (Optimierung)
+            /* Optional, Minimax findet das auch so, aber das spart Rechenzeit */
+            
+            // Starte Minimax
+            let bestScore = -Infinity;
+            let move = -1;
+            
+            // Finde alle freien Plätze
+            const availSpots = [];
+            for(let i=0; i<9; i++) if(board[i] === "") availSpots.push(i);
+
+            // Wenn es der allererste Zug ist (leeres Board), nimm die Mitte (spart Rechenzeit)
+            if(availSpots.length === 9) return 4;
+            if(availSpots.length === 8 && board[4] === "") return 4; 
+
+            for (let i = 0; i < availSpots.length; i++) {
+                let idx = availSpots[i];
+                board[idx] = bot; // Zug simulieren
+                let score = minimax(board, 0, false);
+                board[idx] = ""; // Zug rückgängig machen
+
+                if (score > bestScore) {
+                    bestScore = score;
+                    move = idx;
+                }
+            }
+            return move;
+        }
+
+        const scores = { O: 10, X: -10, tie: 0 };
+
+        function minimax(board, depth, isMaximizing) {
+            // Abbruchbedingungen prüfen
+            for (let condition of winConditions) {
+                const [a, b, c] = condition;
+                if (board[a] && board[a] === board[b] && board[a] === board[c]) {
+                    return scores[board[a]] - (isMaximizing ? depth : -depth); // Kürzere Siege bevorzugen
+                }
+            }
+            if (!board.includes("")) return scores.tie;
+
+            if (isMaximizing) {
+                let bestScore = -Infinity;
+                for (let i = 0; i < 9; i++) {
+                    if (board[i] === "") {
+                        board[i] = bot;
+                        let score = minimax(board, depth + 1, false);
+                        board[i] = "";
+                        bestScore = Math.max(score, bestScore);
+                    }
+                }
+                return bestScore;
+            } else {
+                let bestScore = Infinity;
+                for (let i = 0; i < 9; i++) {
+                    if (board[i] === "") {
+                        board[i] = human;
+                        let score = minimax(board, depth + 1, true);
+                        board[i] = "";
+                        bestScore = Math.min(score, bestScore);
+                    }
+                }
+                return bestScore;
+            }
+        }
+    </script>
+</body>
+</html>
